@@ -392,9 +392,9 @@ async def search(ctx, *, query: str):
 
 @bot.command(name="chat", description="Interacts with the AI.")
 async def chat(ctx, *, message: str):
-    await ctx.send("Thinking...")
+    loading_message = await ctx.send("Loading...")
     response = chat_with_together(message)
-    await ctx.send(response)
+    await loading_message.edit(content=response)
 
 @bot.command(name="clear", description="Clears messages in the channel.")
 @commands.has_permissions(manage_messages=True)
