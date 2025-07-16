@@ -17,6 +17,7 @@ TOGETHER_API_KEY = os.getenv("TOGETHER_API_KEY")
 # Bot setup
 intents = discord.Intents.default()
 intents.message_content = True  # Enable message content intent
+
 bot = commands.Bot(command_prefix="py ", intents=intents, help_command=None)
 
 # TogetherAI configuration
@@ -70,6 +71,7 @@ def chat_with_together(user_input):
 async def on_ready():
     print(f'Logged in as {bot.user.name} ({bot.user.id})')
     print('------')
+    await database.init_db()
     try:
         synced = await bot.tree.sync()
         print(f"Synced {len(synced)} command(s)")
@@ -280,6 +282,8 @@ async def help_command(ctx):
 `py search <query>` - Searches on DuckDuckGo.
 `py chat <message>` - Interacts with the AI.
 `py clear [amount|all]` - Clears messages in the channel (default 100, max 1000, or all).
+`py kick <member> [reason]` - Kicks a member from the server.
+`py ban <member> [reason]` - Bans a member from the server.
 `py help` - Displays this command list.
 
 **Slash Commands (`/`):**
@@ -428,6 +432,37 @@ async def clear(ctx, amount: Optional[str] = None):
         await ctx.send(f"An error occurred while clearing messages: {e}")
     except Exception as e:
         await ctx.send(f"An unexpected error occurred: {e}")
+
+@bot.command(name="setprefix", description="Sets a custom prefix for this server.")
+@commands.has_permissions(manage_guild=True)
+async def setprefix(ctx, new_prefix: str):
+    if len(new_prefix) > 10:
+        await ctx.send("Prefix cannot be longer than 10 characters.")
+        return
+    await database.set_prefix(ctx.guild.id, new_prefix)
+    await ctx.send(f"Prefix for this server has been set to `{new_prefix}`")
+
+@bot.command(name="kick", description="Kicks a member from the server.")
+@commands.has_permissions(kick_members=True)
+async def kick(ctx, member: discord.Member, *, reason: Optional[str] = "No reason provided."):
+    try:
+        await member.kick(reason=reason)
+        await ctx.send(f"Successfully kicked {member.display_name} for: {reason}")
+    except discord.Forbidden:
+        await ctx.send("I don't have permissions to kick members.")
+    except discord.HTTPException as e:
+        await ctx.send(f"An error occurred while kicking: {e}")
+
+@bot.command(name="ban", description="Bans a member from the server.")
+@commands.has_permissions(ban_members=True)
+async def ban(ctx, member: discord.Member, *, reason: Optional[str] = "No reason provided."):
+    try:
+        await member.ban(reason=reason)
+        await ctx.send(f"Successfully banned {member.display_name} for: {reason}")
+    except discord.Forbidden:
+        await ctx.send("I don't have permissions to ban members.")
+    except discord.HTTPException as e:
+        await ctx.send(f"An error occurred while banning: {e}")
 
 # Run the bot
 if DISCORD_TOKEN:
