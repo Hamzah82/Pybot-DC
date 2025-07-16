@@ -379,7 +379,7 @@ async def decrypt(ctx, passphrase: str, *, encrypted_text: str):
 @bot.command(name="search", description="Searches on DuckDuckGo.")
 async def search(ctx, *, query: str):
     try:
-        results = DDGS().text(keywords=query, max_results=3)
+        results = DDGS().text(query=query, max_results=3)
         if results:
             response_message = "**Search Results:**\n"
             for i, result in enumerate(results):
