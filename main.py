@@ -90,10 +90,10 @@ class TicTacToeGame:
     def make_move(self, index):
         if self.board[index] == " " and not self.game_over:
             self.board[index] = self.current_player
-            if self.check_winner():
+            if self.check_winner(self.board):
                 self.game_over = True
                 return True
-            if self.check_draw():
+            if self.check_draw(self.board):
                 self.game_over = True
                 return True
             self.current_player = "O" if self.current_player == "X" else "X"
