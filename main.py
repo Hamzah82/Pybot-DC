@@ -198,7 +198,7 @@ class TicTacToeView(discord.ui.View):
         self.clear_items()
         for i in range(9):
             button = discord.ui.Button(
-                label=self.game.board[i],
+                label=self.game.board[i] if self.game.board[i] != " " else "\u200b",
                 style=discord.ButtonStyle.gray,
                 row=i // 3,
                 custom_id=f"tictactoe_{i}"
