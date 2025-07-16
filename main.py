@@ -6,7 +6,7 @@ import discord
 from discord.ext import commands
 from dotenv import load_dotenv
 from cryptography.fernet import Fernet
-from duckduckgo_search import DDGS
+from ddgs import DDGS
 from typing import Optional
 
 # Load environment variables
