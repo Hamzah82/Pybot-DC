@@ -31,10 +31,10 @@ def load_model():
         decoded_json = base64.b64decode(encoded_data).decode("utf-8")
         return json.loads(decoded_json)
     except requests.exceptions.RequestException as e:
-        print(f"❌ Gagal mengambil model: {e}")
+        print(f"❌ Failed to fetch model: {e}")
         return []
     except Exception:
-        print("❌ Model rusak atau tidak bisa dibaca!")
+        print("❌ Model corrupted or unreadable!")
         return []
 
 # Load model instructions
@@ -59,11 +59,11 @@ def chat_with_together(user_input):
         response = requests.post(API_URL, json=payload, headers=headers)
         response.raise_for_status()
         result = response.json()
-        return result.get("choices", [{}])[0].get("message", {}).get("content", "Terjadi kesalahan dalam respons AI!")
+        return result.get("choices", [{}])[0].get("message", {}).get("content", "An error occurred in AI response!")
     except requests.exceptions.RequestException as e:
-        return f"Terjadi kesalahan: {e}"
+        return f"An error occurred: {e}"
     except Exception as e:
-        return f"Kesalahan tidak terduga: {e}"
+        return f"Unexpected error: {e}"
 
 @bot.event
 async def on_ready():
@@ -210,55 +210,56 @@ class TicTacToeView(discord.ui.View):
 
     async def button_callback(self, interaction: discord.Interaction):
         if interaction.user.id != self.player_id:
-            await interaction.response.send_message("Ini bukan giliranmu!", ephemeral=True)
+            await interaction.response.send_message("This is not your game!", ephemeral=True)
             return
 
         if self.game.current_player == "O": # AI's turn
-            await interaction.response.send_message("Tunggu giliran AI!", ephemeral=True)
+            await interaction.response.send_message("Wait for AI's turn!", ephemeral=True)
             return
 
         index = int(interaction.data["custom_id"].split("_")[1])
         if self.game.make_move(index):
             self.update_buttons()
             if self.game.check_winner():
-                await interaction.response.edit_message(content=f"Pemain {self.game.current_player} menang!", view=self)
+                await interaction.response.edit_message(content=f"Player {self.game.current_player} wins!", view=self)
                 self.stop()
             elif self.game.check_draw():
-                await interaction.response.edit_message(content="Permainan seri!", view=self)
+                await interaction.response.edit_message(content="It's a draw!", view=self)
                 self.stop()
             else:
-                await interaction.response.edit_message(content=f"Giliran {self.game.current_player}", view=self)
+                await interaction.response.edit_message(content=f"It's {self.game.current_player}'s turn.", view=self)
                 if self.game.current_player == "O": # AI's turn
-                    await self.message.edit(content="Giliran AI...")
+                    await self.message.edit(content="AI's turn...")
                     ai_move_index = self.game.ai_move()
                     if ai_move_index is not None:
                         self.game.make_move(ai_move_index)
                         self.update_buttons()
                         if self.game.check_winner():
-                            await self.message.edit(content=f"AI menang!", view=self)
+                            await self.message.edit(content=f"AI wins!", view=self)
                             self.stop()
                         elif self.game.check_draw():
-                            await self.message.edit(content="Permainan seri!", view=self)
+                            await self.message.edit(content="It's a draw!", view=self)
                             self.stop()
                         else:
-                            await self.message.edit(content=f"Giliran {self.game.current_player}", view=self)
+                            await self.message.edit(content=f"It's {self.game.current_player}'s turn.", view=self)
         else:
-            await interaction.response.send_message("Sel ini sudah terisi atau permainan sudah berakhir.", ephemeral=True)
+            await interaction.response.send_message("This cell is already taken or the game is over.", ephemeral=True)
 
     async def on_timeout(self):
         for item in self.children:
             item.disabled = True
-        await self.message.edit(content="Permainan berakhir karena waktu habis.", view=self)
+        await self.message.edit(content="Game ended due to timeout.", view=self)
 
 @bot.tree.command(name="tictactoe", description="Starts a Tic-Tac-Toe game.")
-async def tictactoe(interaction: discord.Interaction, difficulty: str = "easy"):
-    if difficulty not in ["easy", "medium", "hard"]:
-        await interaction.response.send_message("Kesulitan tidak valid. Pilih: easy, medium, atau hard.", ephemeral=True)
-        return
-
-    game = TicTacToeGame(difficulty)
+@discord.app_commands.choices(difficulty=[
+    discord.app_commands.Choice(name="Easy", value="easy"),
+    discord.app_commands.Choice(name="Medium", value="medium"),
+    discord.app_commands.Choice(name="Hard", value="hard"),
+])
+async def tictactoe(interaction: discord.Interaction, difficulty: discord.app_commands.Choice[str]):
+    game = TicTacToeGame(difficulty.value)
     view = TicTacToeView(game, interaction.user.id)
-    await interaction.response.send_message(f"Tic-Tac-Toe dimulai! Giliran {game.current_player}", view=view)
+    await interaction.response.send_message(f"Tic-Tac-Toe started! It's {game.current_player}'s turn.", view=view)
     view.message = await interaction.original_response()
 
 
@@ -268,7 +269,7 @@ async def help_command(ctx):
 **Pybot Commands:**
 
 **Message Commands (Prefix `py `):**
-`py spoof <message>` - Sends a message as the bot (Wokabi 108 only).
+`py spoof <message>` - Sends a message as the bot (Wokabi 758961658634043412 only).
 `py roll XdY[+Z]` - Rolls dice (example: `py roll 2d6+3`).
 `py base64encode <text>` - Encodes text to Base64.
 `py base64decode <text>` - Decodes text from Base64.
@@ -281,7 +282,7 @@ async def help_command(ctx):
 
 **Slash Commands (`/`):**
 `/ping` - Checks if the bot is alive.
-`/tictactoe [difficulty: easy/medium/hard]` - Starts a Tic-Tac-Toe game.
+`/tictactoe` - Starts a Tic-Tac-Toe game.
     """
     await ctx.send(help_message)
 
@@ -310,7 +311,7 @@ async def roll(ctx, dice_string: str):
             modifier = 0
 
         if num_dice <= 0 or die_type <= 0:
-            await ctx.send("Jumlah dadu dan jenis dadu harus lebih dari 0.")
+            await ctx.send("Number of dice and die type must be greater than 0.")
             return
 
         rolls = [random.randint(1, die_type) for _ in range(num_dice)]
@@ -318,9 +319,9 @@ async def roll(ctx, dice_string: str):
 
         await ctx.send(f"Roll: {rolls}, Total: {total}")
     except ValueError:
-        await ctx.send("Format dadu tidak valid. Contoh: `2d6` atau `1d20+5`.")
+        await ctx.send("Invalid dice format. Example: `2d6` or `1d20+5`.")
     except Exception as e:
-        await ctx.send(f"Terjadi kesalahan: {e}")
+        await ctx.send(f"An error occurred: {e}")
 
 @bot.command(name="base64encode", description="Encodes text to Base64.")
 async def base64encode(ctx, *, text: str):
@@ -335,7 +336,7 @@ async def base64decode(ctx, *, text: str):
         decoded_text = decoded_bytes.decode('utf-8')
         await ctx.send(f"Decoded: ```{decoded_text}```")
     except Exception:
-        await ctx.send("Teks tidak valid untuk Base64 decode.")
+        await ctx.send("Invalid text for Base64 decode.")
 
 @bot.command(name="calc", description="Evaluates a mathematical expression (example: py calc 10*5+2).")
 async def calc(ctx, *, expression: str):
@@ -343,12 +344,12 @@ async def calc(ctx, *, expression: str):
         # Only allow basic mathematical operations for security
         allowed_chars = "0123456789+-*/(). "
         if not all(c in allowed_chars for c in expression):
-            await ctx.send("Ekspresi tidak valid. Hanya angka dan operator dasar (+-*/()) yang diizinkan.")
+            await ctx.send("Invalid expression. Only numbers and basic operators (+-*/()) are allowed.")
             return
         result = eval(expression)
         await ctx.send(f"Result: {result}")
     except Exception:
-        await ctx.send("Ekspresi matematika tidak valid.")
+        await ctx.send("Invalid mathematical expression.")
 
 @bot.command(name="encrypt", description="Encrypts text using a passphrase.")
 async def encrypt(ctx, passphrase: str, *, text: str):
@@ -359,7 +360,7 @@ async def encrypt(ctx, passphrase: str, *, text: str):
         encrypted_text = f.encrypt(text.encode()).decode()
         await ctx.send(f"Encrypted: ```{encrypted_text}```")
     except Exception as e:
-        await ctx.send(f"Gagal mengenkripsi: {e}")
+        await ctx.send(f"Failed to encrypt: {e}")
 
 @bot.command(name="decrypt", description="Decrypts text using a passphrase.")
 async def decrypt(ctx, passphrase: str, *, encrypted_text: str):
@@ -370,7 +371,7 @@ async def decrypt(ctx, passphrase: str, *, encrypted_text: str):
         decrypted_text = f.decrypt(encrypted_text.encode()).decode()
         await ctx.send(f"Decrypted: ```{decrypted_text}```")
     except Exception as e:
-        await ctx.send(f"Gagal mendekripsi: {e}")
+        await ctx.send(f"Failed to decrypt: {e}")
 
 @bot.command(name="search", description="Searches on DuckDuckGo.")
 async def search(ctx, *, query: str):
@@ -382,9 +383,9 @@ async def search(ctx, *, query: str):
                 response_message += f"{i+1}. [{result['title']}]({result['href']})\n{result['body']}\n\n"
             await ctx.send(response_message)
         else:
-            await ctx.send("Tidak ada hasil ditemukan.")
+            await ctx.send("No results found.")
     except Exception as e:
-        await ctx.send(f"Terjadi kesalahan saat mencari: {e}")
+        await ctx.send(f"An error occurred during search: {e}")
 
 @bot.command(name="chat", description="Interacts with the AI.")
 async def chat(ctx, *, message: str):
