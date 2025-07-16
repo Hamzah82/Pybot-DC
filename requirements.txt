@@ -1,0 +1,5 @@
+discord.py
+python-dotenv
+requests
+cryptography
+duckduckgo_search
