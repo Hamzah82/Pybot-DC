@@ -7,6 +7,7 @@ from discord.ext import commands
 from dotenv import load_dotenv
 from cryptography.fernet import Fernet
 from duckduckgo_search import DDGS
+from typing import Optional
 
 # Load environment variables
 load_dotenv()
@@ -99,22 +100,22 @@ class TicTacToeGame:
             return True
         return False
 
-    def check_winner(self):
+    def check_winner(self, board):
         winning_combinations = [
             (0, 1, 2), (3, 4, 5), (6, 7, 8),  # Rows
             (0, 3, 6), (1, 4, 7), (2, 5, 8),  # Columns
             (0, 4, 8), (2, 4, 6)              # Diagonals
         ]
         for combo in winning_combinations:
-            if (self.board[combo[0]] == self.board[combo[1]] == self.board[combo[2]] != " "):
+            if (board[combo[0]] == board[combo[1]] == board[combo[2]] != " "):
                 return True
         return False
 
-    def check_draw(self):
-        return " " not in self.board and not self.check_winner()
+    def check_draw(self, board):
+        return " " not in board and not self.check_winner(board)
 
-    def get_empty_cells(self):
-        return [i for i, cell in enumerate(self.board) if cell == " "]
+    def get_empty_cells(self, board):
+        return [i for i, cell in enumerate(board) if cell == " "]
 
     def ai_move(self):
         if self.difficulty == "easy":
@@ -145,7 +146,7 @@ class TicTacToeGame:
         # Minimax algorithm
         best_score = -float('inf')
         best_move = None
-        for cell in self.get_empty_cells():
+        for cell in self.get_empty_cells(self.board):
             self.board[cell] = "O"
             score = self._minimax(self.board, 0, False)
             self.board[cell] = " "
@@ -155,23 +156,23 @@ class TicTacToeGame:
         return best_move
 
     def _find_winning_move(self, player):
-        for cell in self.get_empty_cells():
+        for cell in self.get_empty_cells(self.board):
             self.board[cell] = player
-            if self.check_winner():
+            if self.check_winner(self.board):
                 self.board[cell] = " "
                 return cell
             self.board[cell] = " "
         return None
 
     def _minimax(self, board, depth, is_maximizing):
-        if self.check_winner():
+        if self.check_winner(board):
             return 1 if is_maximizing else -1
-        if self.check_draw():
+        if self.check_draw(board):
             return 0
 
         if is_maximizing:
             best_score = -float('inf')
-            for cell in self.get_empty_cells():
+            for cell in self.get_empty_cells(board):
                 board[cell] = "O"
                 score = self._minimax(board, depth + 1, False)
                 board[cell] = " "
@@ -179,7 +180,7 @@ class TicTacToeGame:
             return best_score
         else:
             best_score = float('inf')
-            for cell in self.get_empty_cells():
+            for cell in self.get_empty_cells(board):
                 board[cell] = "X"
                 score = self._minimax(board, depth + 1, True)
                 board[cell] = " "
@@ -278,6 +279,7 @@ async def help_command(ctx):
 `py decrypt <passphrase> <encrypted_text>` - Decrypts text using a passphrase.
 `py search <query>` - Searches on DuckDuckGo.
 `py chat <message>` - Interacts with the AI.
+`py clear [amount|all]` - Clears messages in the channel (default 100, max 1000, or all).
 `py help` - Displays this command list.
 
 **Slash Commands (`/`):**
@@ -291,6 +293,7 @@ async def spoof(ctx, *, message: str):
     # Replace 108 with the actual user ID of Wokabi 108
     if ctx.author.id == 758961658634043412:
         await ctx.send(message)
+        await ctx.message.delete()
     else:
         await ctx.send("You are not authorized to use this command.")
 
@@ -392,6 +395,39 @@ async def chat(ctx, *, message: str):
     await ctx.send("Thinking...")
     response = chat_with_together(message)
     await ctx.send(response)
+
+@bot.command(name="clear", description="Clears messages in the channel.")
+@commands.has_permissions(manage_messages=True)
+async def clear(ctx, amount: Optional[str] = None):
+    if amount is None or amount.lower() == "all":
+        limit = None  # No limit, clear all
+        await ctx.send("Clearing all messages... This might take a while.")
+    else:
+        try:
+            amount = int(amount)
+            if amount <= 0:
+                await ctx.send("Amount must be a positive number.")
+                return
+            if amount > 1000: # Limit to prevent accidental mass deletion
+                await ctx.send("Cannot clear more than 1000 messages at once.")
+                return
+            limit = amount + 1 # +1 to delete the command message itself
+        except ValueError:
+            await ctx.send("Invalid amount. Please provide a number or 'all'.")
+            return
+
+    try:
+        deleted = await ctx.channel.purge(limit=limit)
+        if limit is None:
+            await ctx.send(f"Cleared all messages.", delete_after=5)
+        else:
+            await ctx.send(f"Cleared {len(deleted) - 1} messages.", delete_after=5)
+    except discord.Forbidden:
+        await ctx.send("I don't have permissions to delete messages.")
+    except discord.HTTPException as e:
+        await ctx.send(f"An error occurred while clearing messages: {e}")
+    except Exception as e:
+        await ctx.send(f"An unexpected error occurred: {e}")
 
 # Run the bot
 if DISCORD_TOKEN:
