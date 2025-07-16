@@ -71,7 +71,6 @@ def chat_with_together(user_input):
 async def on_ready():
     print(f'Logged in as {bot.user.name} ({bot.user.id})')
     print('------')
-    await database.init_db()
     try:
         synced = await bot.tree.sync()
         print(f"Synced {len(synced)} command(s)")
