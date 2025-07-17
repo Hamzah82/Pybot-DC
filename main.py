@@ -4,11 +4,13 @@ import base64
 import requests
 import discord
 import random # Added for animal commands
+import hashlib # Added for encrypt/decrypt commands
 from discord.ext import commands
 from dotenv import load_dotenv
 from cryptography.fernet import Fernet
 from ddgs import DDGS
 from typing import Optional
+import database # Added for setprefix command
 
 # Load environment variables
 load_dotenv()
@@ -19,7 +21,7 @@ TOGETHER_API_KEY = os.getenv("TOGETHER_API_KEY")
 intents = discord.Intents.default()
 intents.message_content = True  # Enable message content intent
 
-bot = commands.Bot(command_prefix="py ", intents=intents, help_command=None)
+bot = commands.Bot(command_prefix=None, intents=intents, help_command=None)
 
 # TogetherAI configuration
 API_URL = "https://api.together.xyz/v1/chat/completions"
@@ -85,22 +87,48 @@ async def ping(interaction: discord.Interaction):
     await interaction.response.send_message("Pong!")
 
 class TicTacToeGame:
-    def __init__(self, difficulty="easy"):
+    def __init__(self, player1_id: int, player2_id: Optional[int] = None, difficulty: Optional[str] = None):
         self.board = [" " for _ in range(9)]
-        self.current_player = "X"
-        self.difficulty = difficulty
         self.game_over = False
 
-    def make_move(self, index):
+        if player2_id and difficulty is None:
+            self.game_type = "pvp"
+            self.players = {player1_id: "X", player2_id: "O"}
+            self.current_player_id = player1_id
+            self.current_player_symbol = "X"
+        elif difficulty and player2_id is None:
+            self.game_type = "pve"
+            self.difficulty = difficulty
+            self.player_id = player1_id # Human player
+            self.current_player_symbol = "X"
+        else:
+            raise ValueError("Invalid game initialization. Provide either opponent or difficulty.")
+
+    def make_move(self, index, player_id=None):
+        if self.game_type == "pvp":
+            if player_id != self.current_player_id:
+                return False # Not current player's turn
+            symbol = self.players[player_id]
+        else: # pve
+            symbol = self.current_player_symbol
+
         if self.board[index] == " " and not self.game_over:
-            self.board[index] = self.current_player
+            self.board[index] = symbol
             if self.check_winner(self.board):
                 self.game_over = True
                 return True
             if self.check_draw(self.board):
                 self.game_over = True
                 return True
-            self.current_player = "O" if self.current_player == "X" else "X"
+            
+            if self.game_type == "pvp":
+                # Switch turn for PvP
+                for p_id in self.players:
+                    if p_id != self.current_player_id:
+                        self.current_player_id = p_id
+                        break
+            else: # pve
+                self.current_player_symbol = "O" if self.current_player_symbol == "X" else "X"
             return True
         return False
 
@@ -130,7 +158,7 @@ class TicTacToeGame:
             return self._ai_move_hard()
 
     def _ai_move_easy(self):
-        empty_cells = self.get_empty_cells()
+        empty_cells = self.get_empty_cells(self.board)
         if empty_cells:
             import random
             return random.choice(empty_cells)
@@ -191,11 +219,12 @@ class TicTacToeGame:
                 best_score = min(score, best_score)
             return best_score
 
+    
+
 class TicTacToeView(discord.ui.View):
-    def __init__(self, game: TicTacToeGame, player_id: int):
+    def __init__(self, game: TicTacToeGame):
         super().__init__(timeout=180)
         self.game = game
-        self.player_id = player_id
         self.message = None
         self.update_buttons()
 
@@ -214,39 +243,55 @@ class TicTacToeView(discord.ui.View):
             self.add_item(button)
 
     async def button_callback(self, interaction: discord.Interaction):
-        if interaction.user.id != self.player_id:
-            await interaction.response.send_message("This is not your game!", ephemeral=True)
-            return
-
-        if self.game.current_player == "O": # AI's turn
-            await interaction.response.send_message("Wait for AI's turn!", ephemeral=True)
-            return
+        if self.game.game_type == "pvp":
+            if interaction.user.id not in self.game.players:
+                await interaction.response.send_message("This is not your game!", ephemeral=True)
+                return
+            if interaction.user.id != self.game.current_player_id:
+                await interaction.response.send_message(f"It's not your turn! It's <@{self.game.current_player_id}>'s turn.", ephemeral=True)
+                return
+            player_id_for_move = interaction.user.id
+            current_player_display = f"<@{self.game.current_player_id}> ({self.game.players[self.game.current_player_id]})"
+        else: # pve
+            if interaction.user.id != self.game.player_id:
+                await interaction.response.send_message("This is not your game!", ephemeral=True)
+                return
+            if self.game.current_player_symbol == "O": # AI's turn
+                await interaction.response.send_message("Wait for AI's turn!", ephemeral=True)
+                return
+            player_id_for_move = None # Not used for PVE make_move
+            current_player_display = f"It's {self.game.current_player_symbol}'s turn."
 
         index = int(interaction.data["custom_id"].split("_")[1])
-        if self.game.make_move(index):
+        if self.game.make_move(index, player_id_for_move):
             self.update_buttons()
-            if self.game.check_winner():
-                await interaction.response.edit_message(content=f"Player {self.game.current_player} wins!", view=self)
+            if self.game.check_winner(self.game.board):
+                if self.game.game_type == "pvp":
+                    winner_id = interaction.user.id
+                    await interaction.response.edit_message(content=f"<@{winner_id}> ({self.game.players[winner_id]}) wins!", view=self)
+                else:
+                    await interaction.response.edit_message(content=f"Player {self.game.current_player_symbol} wins!", view=self)
                 self.stop()
-            elif self.game.check_draw():
+            elif self.game.check_draw(self.game.board):
                 await interaction.response.edit_message(content="It's a draw!", view=self)
                 self.stop()
             else:
-                await interaction.response.edit_message(content=f"It's {self.game.current_player}'s turn.", view=self)
-                if self.game.current_player == "O": # AI's turn
+                await interaction.response.edit_message(content=f"It's {current_player_display}'s turn.", view=self)
+                
+                if self.game.game_type == "pve" and self.game.current_player_symbol == "O": # AI's turn
                     await self.message.edit(content="AI's turn...")
                     ai_move_index = self.game.ai_move()
                     if ai_move_index is not None:
                         self.game.make_move(ai_move_index)
                         self.update_buttons()
-                        if self.game.check_winner():
+                        if self.game.check_winner(self.game.board):
                             await self.message.edit(content=f"AI wins!", view=self)
                             self.stop()
-                        elif self.game.check_draw():
+                        elif self.game.check_draw(self.game.board):
                             await self.message.edit(content="It's a draw!", view=self)
                             self.stop()
                         else:
-                            await self.message.edit(content=f"It's {self.game.current_player}'s turn.", view=self)
+                            await self.message.edit(content=f"It's {self.game.current_player_symbol}'s turn.", view=self)
         else:
             await interaction.response.send_message("This cell is already taken or the game is over.", ephemeral=True)
 
@@ -258,12 +303,38 @@ class TicTacToeView(discord.ui.View):
 @bot.tree.command(name="tictactoe", description="Starts a Tic-Tac-Toe game.")
 @discord.app_commands.allowed_installs(guilds=True, users=True)
 @discord.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+@discord.app_commands.describe(
+    opponent="The user you want to play against (leave empty to play against AI)."
+)
 @discord.app_commands.choices(difficulty=[
     discord.app_commands.Choice(name="Easy", value="easy"),
     discord.app_commands.Choice(name="Medium", value="medium"),
     discord.app_commands.Choice(name="Hard", value="hard"),
 ])
-async def tictactoe(interaction: discord.Interaction, difficulty: discord.app_commands.Choice[str]):
+async def tictactoe(interaction: discord.Interaction, opponent: Optional[discord.Member] = None, difficulty: Optional[discord.app_commands.Choice[str]] = None):
+    if opponent and difficulty:
+        await interaction.response.send_message("You cannot specify both an opponent and a difficulty. Please choose one mode.", ephemeral=True)
+        return
+
+    if opponent:
+        if opponent.bot:
+            await interaction.response.send_message("You cannot play against a bot as an opponent.", ephemeral=True)
+            return
+        if opponent.id == interaction.user.id:
+            await interaction.response.send_message("You cannot play against yourself!", ephemeral=True)
+            return
+        game = TicTacToeGame(interaction.user.id, opponent.id)
+        view = TicTacToeView(game)
+        await interaction.response.send_message(f"Tic-Tac-Toe started! <@{interaction.user.id}> (X) vs <@{opponent.id}> (O). It's <@{game.current_player_id}>'s turn.", view=view)
+    elif difficulty:
+        game = TicTacToeGame(interaction.user.id, difficulty=difficulty.value)
+        view = TicTacToeView(game)
+        await interaction.response.send_message(f"Tic-Tac-Toe started! You (X) vs AI (O). It's your turn.", view=view)
+    else:
+        await interaction.response.send_message("Please specify either an opponent or a difficulty to start the game.", ephemeral=True)
+        return
+
+    view.message = await interaction.original_response()
     game = TicTacToeGame(difficulty.value)
     view = TicTacToeView(game, interaction.user.id)
     await interaction.response.send_message(f"Tic-Tac-Toe started! It's {game.current_player}'s turn.", view=view)
@@ -383,50 +454,53 @@ async def random_command(interaction: discord.Interaction):
     await fetch_and_send_animal(interaction, chosen_animal)
 
 
-@bot.command(name="help", description="Displays this command list.")
-async def help_command(ctx):
+@bot.tree.command(name="help", description="Displays this command list.")
+@discord.app_commands.allowed_installs(guilds=True, users=True)
+@discord.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+async def help_command(interaction: discord.Interaction):
     help_message = """
 **Pybot Commands:**
 
-**Message Commands (Prefix `py `):**
-`py spoof <message>` - Sends a message as the bot (Wokabi 758961658634043412 only).
-`py roll XdY[+Z]` - Rolls dice (example: `py roll 2d6+3`).
-`py base64encode <text>` - Encodes text to Base64.
-`py base64decode <text>` - Decodes text from Base64.
-`py calc <expression>` - Evaluates a mathematical expression (example: `py calc 10*5+2`).
-`py encrypt <passphrase> <text>` - Encrypts text using a passphrase.
-`py decrypt <passphrase> <encrypted_text>` - Decrypts text using a passphrase.
-`py search <query>` - Searches on DuckDuckGo.
-`py chat <message>` - Interacts with the AI.
-`py clear [amount|all]` - Clears messages in the channel (default 100, max 1000, or all).
-`py kick <member> [reason]` - Kicks a member from the server.
-`py ban <member> [reason]` - Bans a member from the server.
-`py help` - Displays this command list.
-
 **Slash Commands (`/`):**
 `/ping` - Checks if the bot is alive.
-`/tictactoe` - Starts a Tic-Tac-Toe game.
+`/tictactoe [opponent|difficulty]` - Starts a Tic-Tac-Toe game against AI or another player.
 `/invite` - Generates a Discord server invite link.
 `/fact` - Generates a random interesting fact.
 `/dog` - Fetches a random picture of a dog.
 `/cat` - Fetches a random picture of a cat.
 `/random` - Fetches a random picture of a cat OR a dog.
+`/spoof <message>` - Sends a message as the bot (Wokabi 758961658634043412 only).
+`/roll <dice_string>` - Rolls dice (example: `/roll 2d6+3`).
+`/base64encode <text>` - Encodes text to Base64.
+`/base64decode <text>` - Decodes text from Base64.
+`/calc <expression>` - Evaluates a mathematical expression (example: `/calc 10*5+2`).
+`/encrypt <passphrase> <text>` - Encrypts text using a passphrase.
+`/decrypt <passphrase> <encrypted_text>` - Decrypts text using a passphrase.
+`/search <query>` - Searches on DuckDuckGo.
+`/chat <message>` - Interacts with the AI.
+`/clear [amount]` - Clears messages in the channel (default 100, max 1000).
+`/setprefix <new_prefix>` - Sets a custom prefix for this server.
+`/kick <member> [reason]` - Kicks a member from the server.
+`/ban <member> [reason]` - Bans a member from the server.
+`/help` - Displays this command list.
     """
-    await ctx.send(help_message)
+    await interaction.response.send_message(help_message)
 
-@bot.command(name="spoof", description="Sends a message as the bot (Wokabi 108 only).")
-async def spoof(ctx, *, message: str):
+@bot.tree.command(name="spoof", description="Sends a message as the bot (Wokabi 758961658634043412 only).")
+@discord.app_commands.allowed_installs(guilds=True, users=True)
+@discord.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+async def spoof(interaction: discord.Interaction, message: str):
     # Replace 108 with the actual user ID of Wokabi 108
-    if ctx.author.id == 758961658634043412:
-        await ctx.send(message)
-        await ctx.message.delete()
+    if interaction.user.id == 758961658634043412:
+        await interaction.response.send_message(message)
     else:
-        await ctx.send("You are not authorized to use this command.")
+        await interaction.response.send_message("You are not authorized to use this command.", ephemeral=True)
 
-@bot.command(name="roll", description="Rolls dice (example: py roll 2d6+3).")
-async def roll(ctx, dice_string: str):
+@bot.tree.command(name="roll", description="Rolls dice (example: /roll 2d6+3).")
+@discord.app_commands.allowed_installs(guilds=True, users=True)
+@discord.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+async def roll(interaction: discord.Interaction, dice_string: str):
     try:
-        import random
         parts = dice_string.lower().split('d')
         num_dice = int(parts[0])
         
@@ -440,151 +514,179 @@ async def roll(ctx, dice_string: str):
             modifier = 0
 
         if num_dice <= 0 or die_type <= 0:
-            await ctx.send("Number of dice and die type must be greater than 0.")
+            await interaction.response.send_message("Number of dice and die type must be greater than 0.", ephemeral=True)
             return
 
         rolls = [random.randint(1, die_type) for _ in range(num_dice)]
         total = sum(rolls) + modifier
 
-        await ctx.send(f"Roll: {rolls}, Total: {total}")
+        await interaction.response.send_message(f"Roll: {rolls}, Total: {total}")
     except ValueError:
-        await ctx.send("Invalid dice format. Example: `2d6` or `1d20+5`.")
+        await interaction.response.send_message("Invalid dice format. Example: `/roll 2d6` or `/roll 1d20+5`.", ephemeral=True)
     except Exception as e:
-        await ctx.send(f"An error occurred: {e}")
+        await interaction.response.send_message(f"An error occurred: {e}", ephemeral=True)
 
-@bot.command(name="base64encode", description="Encodes text to Base64.")
-async def base64encode(ctx, *, text: str):
+@bot.tree.command(name="base64encode", description="Encodes text to Base64.")
+@discord.app_commands.allowed_installs(guilds=True, users=True)
+@discord.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+async def base64encode(interaction: discord.Interaction, text: str):
     encoded_bytes = base64.b64encode(text.encode('utf-8'))
     encoded_text = encoded_bytes.decode('utf-8')
-    await ctx.send(f"Encoded: ```{encoded_text}```")
+    await interaction.response.send_message(f"Encoded: ```{encoded_text}```")
 
-@bot.command(name="base64decode", description="Decodes text from Base64.")
-async def base64decode(ctx, *, text: str):
+@bot.tree.command(name="base64decode", description="Decodes text from Base64.")
+@discord.app_commands.allowed_installs(guilds=True, users=True)
+@discord.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+async def base64decode(interaction: discord.Interaction, text: str):
     try:
         decoded_bytes = base64.b64decode(text.encode('utf-8'))
         decoded_text = decoded_bytes.decode('utf-8')
-        await ctx.send(f"Decoded: ```{decoded_text}```")
+        await interaction.response.send_message(f"Decoded: ```{decoded_text}```")
     except Exception:
-        await ctx.send("Invalid text for Base64 decode.")
+        await interaction.response.send_message("Invalid text for Base64 decode.", ephemeral=True)
 
-@bot.command(name="calc", description="Evaluates a mathematical expression (example: py calc 10*5+2).")
-async def calc(ctx, *, expression: str):
+@bot.tree.command(name="calc", description="Evaluates a mathematical expression (example: /calc 10*5+2).")
+@discord.app_commands.allowed_installs(guilds=True, users=True)
+@discord.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+async def calc(interaction: discord.Interaction, expression: str):
     try:
         # Only allow basic mathematical operations for security
         allowed_chars = "0123456789+-*/(). "
         if not all(c in allowed_chars for c in expression):
-            await ctx.send("Invalid expression. Only numbers and basic operators (+-*/()) are allowed.")
+            await interaction.response.send_message("Invalid expression. Only numbers and basic operators (+-*/()) are allowed.", ephemeral=True)
             return
         result = eval(expression)
-        await ctx.send(f"Result: {result}")
+        await interaction.response.send_message(f"Result: {result}")
     except Exception:
-        await ctx.send("Invalid mathematical expression.")
+        await interaction.response.send_message("Invalid mathematical expression.", ephemeral=True)
 
-@bot.command(name="encrypt", description="Encrypts text using a passphrase.")
-async def encrypt(ctx, passphrase: str, *, text: str):
+@bot.tree.command(name="encrypt", description="Encrypts text using a passphrase.")
+@discord.app_commands.allowed_installs(guilds=True, users=True)
+@discord.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+async def encrypt(interaction: discord.Interaction, passphrase: str, text: str):
     try:
-        import hashlib
         key = base64.urlsafe_b64encode(hashlib.sha256(passphrase.encode()).digest())
         f = Fernet(key)
         encrypted_text = f.encrypt(text.encode()).decode()
-        await ctx.send(f"Encrypted: ```{encrypted_text}```")
+        await interaction.response.send_message(f"Encrypted: ```{encrypted_text}```")
     except Exception as e:
-        await ctx.send(f"Failed to encrypt: {e}")
+        await interaction.response.send_message(f"Failed to encrypt: {e}", ephemeral=True)
 
-@bot.command(name="decrypt", description="Decrypts text using a passphrase.")
-async def decrypt(ctx, passphrase: str, *, encrypted_text: str):
+@bot.tree.command(name="decrypt", description="Decrypts text using a passphrase.")
+@discord.app_commands.allowed_installs(guilds=True, users=True)
+@discord.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+async def decrypt(interaction: discord.Interaction, passphrase: str, encrypted_text: str):
     try:
-        import hashlib
         key = base64.urlsafe_b64encode(hashlib.sha256(passphrase.encode()).digest())
         f = Fernet(key)
         decrypted_text = f.decrypt(encrypted_text.encode()).decode()
-        await ctx.send(f"Decrypted: ```{decrypted_text}```")
+        await interaction.response.send_message(f"Decrypted: ```{decrypted_text}```")
     except Exception as e:
-        await ctx.send(f"Failed to decrypt: {e}")
+        await interaction.response.send_message(f"Failed to decrypt: {e}", ephemeral=True)
 
-@bot.command(name="search", description="Searches on DuckDuckGo.")
-async def search(ctx, *, query: str):
+@bot.tree.command(name="search", description="Searches on DuckDuckGo.")
+@discord.app_commands.allowed_installs(guilds=True, users=True)
+@discord.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+async def search(interaction: discord.Interaction, query: str):
+    await interaction.response.defer()
     try:
         results = DDGS().text(query=query, max_results=3)
         if results:
             response_message = "**Search Results:**\n"
             for i, result in enumerate(results):
                 response_message += f"{i+1}. [{result['title']}]({result['href']})\n{result['body']}\n\n"
-            await ctx.send(response_message)
+            await interaction.followup.send(response_message)
         else:
-            await ctx.send("No results found.")
+            await interaction.followup.send("No results found.")
     except Exception as e:
-        await ctx.send(f"An error occurred during search: {e}")
+        await interaction.followup.send(f"An error occurred during search: {e}", ephemeral=True)
 
-@bot.command(name="chat", description="Interacts with the AI.")
-async def chat(ctx, *, message: str):
-    loading_message = await ctx.send("Loading...")
+@bot.tree.command(name="chat", description="Interacts with the AI.")
+@discord.app_commands.allowed_installs(guilds=True, users=True)
+@discord.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+async def chat(interaction: discord.Interaction, message: str):
+    await interaction.response.defer()
     response = chat_with_together(message)
-    await loading_message.edit(content=response)
+    await interaction.followup.send(response)
 
-@bot.command(name="clear", description="Clears messages in the channel.")
-@commands.has_permissions(manage_messages=True)
-async def clear(ctx, amount: Optional[str] = None):
-    if amount is None or amount.lower() == "all":
-        limit = None  # No limit, clear all
-        await ctx.send("Clearing all messages... This might take a while.")
-    else:
-        try:
-            amount = int(amount)
-            if amount <= 0:
-                await ctx.send("Amount must be a positive number.")
-                return
-            if amount > 1000: # Limit to prevent accidental mass deletion
-                await ctx.send("Cannot clear more than 1000 messages at once.")
-                return
-            limit = amount + 1 # +1 to delete the command message itself
-        except ValueError:
-            await ctx.send("Invalid amount. Please provide a number or 'all'.")
-            return
-
-    try:
-        deleted = await ctx.channel.purge(limit=limit)
-        if limit is None:
-            await ctx.send(f"Cleared all messages.", delete_after=5)
-        else:
-            await ctx.send(f"Cleared {len(deleted) - 1} messages.", delete_after=5)
-    except discord.Forbidden:
-        await ctx.send("I don't have permissions to delete messages.")
-    except discord.HTTPException as e:
-        await ctx.send(f"An error occurred while clearing messages: {e}")
-    except Exception as e:
-        await ctx.send(f"An unexpected error occurred: {e}")
-
-@bot.command(name="setprefix", description="Sets a custom prefix for this server.")
-@commands.has_permissions(manage_guild=True)
-async def setprefix(ctx, new_prefix: str):
-    if len(new_prefix) > 10:
-        await ctx.send("Prefix cannot be longer than 10 characters.")
+@bot.tree.command(name="clear", description="Clears messages in the channel.")
+@discord.app_commands.allowed_installs(guilds=True, users=True)
+@discord.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+@discord.app_commands.checks.has_permissions(manage_messages=True)
+async def clear(interaction: discord.Interaction, amount: Optional[int] = None):
+    if amount is None:
+        limit = 100  # Default to 100 if not specified
+        await interaction.response.defer(ephemeral=True)
+    elif amount <= 0:
+        await interaction.response.send_message("Amount must be a positive number.", ephemeral=True)
         return
-    await database.set_prefix(ctx.guild.id, new_prefix)
-    await ctx.send(f"Prefix for this server has been set to `{new_prefix}`")
+    elif amount > 1000: # Limit to prevent accidental mass deletion
+        await interaction.response.send_message("Cannot clear more than 1000 messages at once.", ephemeral=True)
+        return
+    else:
+        limit = amount + 1 # +1 to delete the command message itself
+        await interaction.response.defer(ephemeral=True)
 
-@bot.command(name="kick", description="Kicks a member from the server.")
-@commands.has_permissions(kick_members=True)
-async def kick(ctx, member: discord.Member, *, reason: Optional[str] = "No reason provided."):
     try:
+        deleted = await interaction.channel.purge(limit=limit)
+        if amount is None:
+            await interaction.followup.send(f"Cleared {len(deleted) - 1} messages.", ephemeral=True)
+        else:
+            await interaction.followup.send(f"Cleared {len(deleted) - 1} messages.", ephemeral=True)
+    except discord.Forbidden:
+        await interaction.followup.send("I don't have permissions to delete messages.", ephemeral=True)
+    except discord.HTTPException as e:
+        await interaction.followup.send(f"An error occurred while clearing messages: {e}", ephemeral=True)
+    except Exception as e:
+        await interaction.followup.send(f"An unexpected error occurred: {e}", ephemeral=True)
+
+@bot.tree.command(name="setprefix", description="Sets a custom prefix for this server.")
+@discord.app_commands.allowed_installs(guilds=True, users=True)
+@discord.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+@discord.app_commands.checks.has_permissions(manage_guild=True)
+async def setprefix(interaction: discord.Interaction, new_prefix: str):
+    if interaction.guild_id is None:
+        await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
+        return
+    if len(new_prefix) > 10:
+        await interaction.response.send_message("Prefix cannot be longer than 10 characters.", ephemeral=True)
+        return
+    await database.set_prefix(interaction.guild_id, new_prefix)
+    await interaction.response.send_message(f"Prefix for this server has been set to `{new_prefix}`")
+
+@bot.tree.command(name="kick", description="Kicks a member from the server.")
+@discord.app_commands.allowed_installs(guilds=True, users=True)
+@discord.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+@discord.app_commands.checks.has_permissions(kick_members=True)
+async def kick(interaction: discord.Interaction, member: discord.Member, reason: Optional[str] = "No reason provided."):
+    if interaction.guild_id is None:
+        await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
+        return
+    try:
+        await interaction.response.defer(ephemeral=True)
         await member.kick(reason=reason)
-        await ctx.send(f"Successfully kicked {member.display_name} for: {reason}")
+        await interaction.followup.send(f"Successfully kicked {member.display_name} for: {reason}")
     except discord.Forbidden:
-        await ctx.send("I don't have permissions to kick members.")
+        await interaction.followup.send("I don't have permissions to kick members.", ephemeral=True)
     except discord.HTTPException as e:
-        await ctx.send(f"An error occurred while kicking: {e}")
+        await interaction.followup.send(f"An error occurred while kicking: {e}", ephemeral=True)
 
-@bot.command(name="ban", description="Bans a member from the server.")
-@commands.has_permissions(ban_members=True)
-async def ban(ctx, member: discord.Member, *, reason: Optional[str] = "No reason provided."):
+@bot.tree.command(name="ban", description="Bans a member from the server.")
+@discord.app_commands.allowed_installs(guilds=True, users=True)
+@discord.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+@discord.app_commands.checks.has_permissions(ban_members=True)
+async def ban(interaction: discord.Interaction, member: discord.Member, reason: Optional[str] = "No reason provided."):
+    if interaction.guild_id is None:
+        await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
+        return
     try:
+        await interaction.response.defer(ephemeral=True)
         await member.ban(reason=reason)
-        await ctx.send(f"Successfully banned {member.display_name} for: {reason}")
+        await interaction.followup.send(f"Successfully banned {member.display_name} for: {reason}")
     except discord.Forbidden:
-        await ctx.send("I don't have permissions to ban members.")
+        await interaction.followup.send("I don't have permissions to ban members.", ephemeral=True)
     except discord.HTTPException as e:
-        await ctx.send(f"An error occurred while banning: {e}")
+        await interaction.followup.send(f"An error occurred while banning: {e}", ephemeral=True)
 
 # Run the bot
 if DISCORD_TOKEN:
