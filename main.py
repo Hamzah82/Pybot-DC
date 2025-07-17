@@ -3,6 +3,7 @@ import json
 import base64
 import requests
 import discord
+import random # Added for animal commands
 from discord.ext import commands
 from dotenv import load_dotenv
 from cryptography.fernet import Fernet
@@ -78,6 +79,8 @@ async def on_ready():
         print(e)
 
 @bot.tree.command(name="ping", description="Checks if the bot is alive.")
+@discord.app_commands.allowed_installs(guilds=True, users=True)
+@discord.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
 async def ping(interaction: discord.Interaction):
     await interaction.response.send_message("Pong!")
 
@@ -253,6 +256,8 @@ class TicTacToeView(discord.ui.View):
         await self.message.edit(content="Game ended due to timeout.", view=self)
 
 @bot.tree.command(name="tictactoe", description="Starts a Tic-Tac-Toe game.")
+@discord.app_commands.allowed_installs(guilds=True, users=True)
+@discord.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
 @discord.app_commands.choices(difficulty=[
     discord.app_commands.Choice(name="Easy", value="easy"),
     discord.app_commands.Choice(name="Medium", value="medium"),
@@ -266,6 +271,8 @@ async def tictactoe(interaction: discord.Interaction, difficulty: discord.app_co
 
 
 @bot.tree.command(name="invite", description="Generates a Discord server invite link.")
+@discord.app_commands.allowed_installs(guilds=True, users=True)
+@discord.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
 @discord.app_commands.describe(
     max_uses="Maximum number of times the invite can be used (default: 0 for unlimited).",
     max_age="Duration after which the invite expires in seconds (default: 0 for never).",
@@ -297,6 +304,8 @@ async def invite(
         await interaction.response.send_message(f"An error occurred while creating the invite: {e}", ephemeral=True)
 
 @bot.tree.command(name="fact", description="Generates a random interesting fact.")
+@discord.app_commands.allowed_installs(guilds=True, users=True)
+@discord.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
 async def fact(interaction: discord.Interaction):
     try:
         response = requests.get("https://uselessfacts.jsph.pl/random.json?language=en")
@@ -307,6 +316,71 @@ async def fact(interaction: discord.Interaction):
         await interaction.response.send_message(f"Failed to fetch a fact: {e}", ephemeral=True)
     except Exception as e:
         await interaction.response.send_message(f"An unexpected error occurred: {e}", ephemeral=True)
+
+# --- API ENDPOINTS for animal commands ---
+DOG_API_URL = "https://dog.ceo/api/breeds/image/random"
+CAT_API_URL = "https://api.thecatapi.com/v1/images/search"
+
+# --- HELPER FUNCTION for animal commands ---
+async def fetch_and_send_animal(interaction: discord.Interaction, animal_type: str):
+    """A helper function to fetch and send an animal picture."""
+    await interaction.response.defer(thinking=True)
+
+    try:
+        if animal_type == 'dog':
+            api_url = DOG_API_URL
+            title = "Woof! Here's a random doggo!"
+            color = discord.Color.blue()
+        elif animal_type == 'cat':
+            api_url = CAT_API_URL
+            title = "Meow! Here's a random kitty!"
+            color = discord.Color.orange()
+        else:
+            await interaction.followup.send("Sorry, I don't know that animal.")
+            return
+
+        response = requests.get(api_url)
+        response.raise_for_status()
+        data = response.json()
+
+        if animal_type == 'dog':
+            image_url = data.get('message')
+        elif animal_type == 'cat':
+            image_url = data[0].get('url')
+
+        if image_url:
+            embed = discord.Embed(title=title, color=color)
+            embed.set_image(url=image_url)
+            embed.set_footer(text=f"Powered by {animal_type} APIs")
+            await interaction.followup.send(embed=embed)
+        else:
+            await interaction.followup.send("Sorry, the API didn't provide an image URL.")
+
+    except requests.RequestException as e:
+        print(f"Error fetching {animal_type} image: {e}")
+        await interaction.followup.send(f"Sorry, I couldn't fetch a {animal_type} picture right now.")
+
+@bot.tree.command(name="dog", description="Fetches a random picture of a dog.")
+@discord.app_commands.allowed_installs(guilds=True, users=True)
+@discord.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+async def dog_command(interaction: discord.Interaction):
+    """Calls the helper function to get a dog picture."""
+    await fetch_and_send_animal(interaction, 'dog')
+
+@bot.tree.command(name="cat", description="Fetches a random picture of a cat.")
+@discord.app_commands.allowed_installs(guilds=True, users=True)
+@discord.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+async def cat_command(interaction: discord.Interaction):
+    """Calls the helper function to get a cat picture."""
+    await fetch_and_send_animal(interaction, 'cat')
+
+@bot.tree.command(name="random", description="Fetches a random picture of a cat OR a dog.")
+@discord.app_commands.allowed_installs(guilds=True, users=True)
+@discord.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+async def random_command(interaction: discord.Interaction):
+    """Randomly chooses between a cat or a dog and sends a picture."""
+    chosen_animal = random.choice(['dog', 'cat'])
+    await fetch_and_send_animal(interaction, chosen_animal)
 
 
 @bot.command(name="help", description="Displays this command list.")
@@ -334,6 +408,9 @@ async def help_command(ctx):
 `/tictactoe` - Starts a Tic-Tac-Toe game.
 `/invite` - Generates a Discord server invite link.
 `/fact` - Generates a random interesting fact.
+`/dog` - Fetches a random picture of a dog.
+`/cat` - Fetches a random picture of a cat.
+`/random` - Fetches a random picture of a cat OR a dog.
     """
     await ctx.send(help_message)
 
