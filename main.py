@@ -296,6 +296,18 @@ async def invite(
     except Exception as e:
         await interaction.response.send_message(f"An error occurred while creating the invite: {e}", ephemeral=True)
 
+@bot.tree.command(name="fact", description="Generates a random interesting fact.")
+async def fact(interaction: discord.Interaction):
+    try:
+        response = requests.get("https://uselessfacts.jsph.pl/random.json?language=en")
+        response.raise_for_status()  # Raise an exception for HTTP errors
+        data = response.json()
+        await interaction.response.send_message(f"**Random Fact:** {data['text']}")
+    except requests.exceptions.RequestException as e:
+        await interaction.response.send_message(f"Failed to fetch a fact: {e}", ephemeral=True)
+    except Exception as e:
+        await interaction.response.send_message(f"An unexpected error occurred: {e}", ephemeral=True)
+
 
 @bot.command(name="help", description="Displays this command list.")
 async def help_command(ctx):
@@ -321,6 +333,7 @@ async def help_command(ctx):
 `/ping` - Checks if the bot is alive.
 `/tictactoe` - Starts a Tic-Tac-Toe game.
 `/invite` - Generates a Discord server invite link.
+`/fact` - Generates a random interesting fact.
     """
     await ctx.send(help_message)
 
