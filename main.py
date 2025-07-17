@@ -265,6 +265,38 @@ async def tictactoe(interaction: discord.Interaction, difficulty: discord.app_co
     view.message = await interaction.original_response()
 
 
+@bot.tree.command(name="invite", description="Generates a Discord server invite link.")
+@discord.app_commands.describe(
+    max_uses="Maximum number of times the invite can be used (default: 0 for unlimited).",
+    max_age="Duration after which the invite expires in seconds (default: 0 for never).",
+    temporary="Whether this invite only grants temporary membership (default: False).",
+    unique="Whether to create a unique invite, even if a similar one already exists (default: False)."
+)
+async def invite(
+    interaction: discord.Interaction,
+    max_uses: Optional[int] = 0,
+    max_age: Optional[int] = 0,
+    temporary: Optional[bool] = False,
+    unique: Optional[bool] = False
+):
+    if not interaction.user.guild_permissions.create_instant_invite:
+        await interaction.response.send_message("You don't have permission to create invite links.", ephemeral=True)
+        return
+
+    try:
+        invite_link = await interaction.channel.create_invite(
+            max_uses=max_uses,
+            max_age=max_age,
+            temporary=temporary,
+            unique=unique
+        )
+        await interaction.response.send_message(f"Here is your invite link: {invite_link.url}")
+    except discord.Forbidden:
+        await interaction.response.send_message("I don't have permission to create invite links in this channel.", ephemeral=True)
+    except Exception as e:
+        await interaction.response.send_message(f"An error occurred while creating the invite: {e}", ephemeral=True)
+
+
 @bot.command(name="help", description="Displays this command list.")
 async def help_command(ctx):
     help_message = """
@@ -288,6 +320,7 @@ async def help_command(ctx):
 **Slash Commands (`/`):**
 `/ping` - Checks if the bot is alive.
 `/tictactoe` - Starts a Tic-Tac-Toe game.
+`/invite` - Generates a Discord server invite link.
     """
     await ctx.send(help_message)
 
