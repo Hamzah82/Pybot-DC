@@ -123,10 +123,11 @@ class TicTacToeGame:
             
             if self.game_type == "pvp":
                 # Switch turn for PvP
-                for p_id in self.players:
-                    if p_id != self.current_player_id:
-                        self.current_player_id = p_id
-                        break
+                player_ids_list = list(self.players.keys())
+                if self.current_player_id == player_ids_list[0]:
+                    self.current_player_id = player_ids_list[1]
+                else:
+                    self.current_player_id = player_ids_list[0]
             else: # pve
                 self.current_player_symbol = "O" if self.current_player_symbol == "X" else "X"
             return True
@@ -276,7 +277,13 @@ class TicTacToeView(discord.ui.View):
                 await interaction.response.edit_message(content="It's a draw!", view=self)
                 self.stop()
             else:
-                await interaction.response.edit_message(content=f"It's {current_player_display}'s turn.", view=self)
+                # Re-evaluate current_player_display AFTER the move has been made and turn switched
+                if self.game.game_type == "pvp":
+                    next_player_display = f"<@{self.game.current_player_id}> ({self.game.players[self.game.current_player_id]})"
+                else: # pve
+                    next_player_display = f"It's {self.game.current_player_symbol}'s turn."
+                
+                await interaction.response.edit_message(content=f"It's {next_player_display}'s turn.", view=self)
                 
                 if self.game.game_type == "pve" and self.game.current_player_symbol == "O": # AI's turn
                     await self.message.edit(content="AI's turn...")
@@ -291,6 +298,7 @@ class TicTacToeView(discord.ui.View):
                             await self.message.edit(content="It's a draw!", view=self)
                             self.stop()
                         else:
+                            # After AI move, it's human's turn again (X)
                             await self.message.edit(content=f"It's {self.game.current_player_symbol}'s turn.", view=self)
         else:
             await interaction.response.send_message("This cell is already taken or the game is over.", ephemeral=True)
@@ -311,7 +319,7 @@ class TicTacToeView(discord.ui.View):
     discord.app_commands.Choice(name="Medium", value="medium"),
     discord.app_commands.Choice(name="Hard", value="hard"),
 ])
-async def tictactoe(interaction: discord.Interaction, opponent: Optional[discord.Member] = None, difficulty: Optional[discord.app_commands.Choice[str]] = None):
+async def tictactoe(interaction: discord.Interaction, opponent: Optional[discord.User] = None, difficulty: Optional[discord.app_commands.Choice[str]] = None):
     if opponent and difficulty:
         await interaction.response.send_message("You cannot specify both an opponent and a difficulty. Please choose one mode.", ephemeral=True)
         return
